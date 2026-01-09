@@ -18,6 +18,7 @@ from wut import (
     cmd_dis,
     cmd_add,
     cmd_run,
+    fuzzy_match,
     Command,
     RepoConfig,
 )
@@ -278,6 +279,8 @@ class TestCmdDis(unittest.TestCase):
         cmd_dis()
 
         self.assertEqual(mock_print.call_count, 2)
+        mock_print.assert_any_call("1. test1 - echo test1")
+        mock_print.assert_any_call("2. test2 - echo test2")
 
     @patch("wut.get_config_path")
     @patch("wut.get_repo_key")
@@ -296,6 +299,28 @@ class TestCmdDis(unittest.TestCase):
         mock_print.assert_called_with("No commands defined for this repository")
 
 
+class TestFuzzyMatch(unittest.TestCase):
+    def test_empty_query(self):
+        matches, score = fuzzy_match("", "test command")
+        self.assertTrue(matches)
+        self.assertEqual(score, 0.0)
+
+    def test_exact_match(self):
+        matches, score = fuzzy_match("test", "test command")
+        self.assertTrue(matches)
+        self.assertGreater(score, 0.0)
+
+    def test_substring_match(self):
+        matches, score = fuzzy_match("tc", "test command")
+        self.assertTrue(matches)
+        self.assertGreater(score, 0.0)
+
+    def test_no_match(self):
+        matches, score = fuzzy_match("xyz", "test command")
+        self.assertFalse(matches)
+        self.assertEqual(score, 0.0)
+
+
 class TestCmdRun(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -308,88 +333,31 @@ class TestCmdRun(unittest.TestCase):
 
     @patch("wut.get_config_path")
     @patch("wut.get_repo_key")
-    @patch("subprocess.run")
-    def test_run_exact_match(self, mock_run, mock_get_repo_key, mock_get_config_path):
+    def test_run_no_commands(self, mock_get_repo_key, mock_get_config_path):
         mock_get_config_path.return_value = self.config_file
         mock_get_repo_key.return_value = "owner/project"
 
-        test_data = {
-            "owner/project": {
-                "repo": "/path/to/repo",
-                "commands": [{"title": "test", "command": "echo test"}],
-            }
-        }
+        test_data = {"owner/project": {"repo": "/path/to/repo", "commands": []}}
         with open(self.config_file, "w") as f:
             json.dump(test_data, f)
 
-        cmd_run("test", [])
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        self.assertIn("echo test", call_args[0][0])
-        self.assertEqual(call_args[1]["cwd"], "/path/to/repo")
+        with patch("builtins.print") as mock_print:
+            cmd_run()
+            mock_print.assert_called_with("No commands defined for this repository")
 
     @patch("wut.get_config_path")
     @patch("wut.get_repo_key")
-    @patch("subprocess.run")
-    def test_run_prefix_match(self, mock_run, mock_get_repo_key, mock_get_config_path):
+    def test_run_no_repo_config(self, mock_get_repo_key, mock_get_config_path):
         mock_get_config_path.return_value = self.config_file
         mock_get_repo_key.return_value = "owner/project"
 
-        test_data = {
-            "owner/project": {
-                "repo": "/path/to/repo",
-                "commands": [{"title": "testcmd", "command": "echo test"}],
-            }
-        }
+        test_data = {"other/repo": {"repo": "/path/to/other", "commands": []}}
         with open(self.config_file, "w") as f:
             json.dump(test_data, f)
 
-        cmd_run("test", [])
-
-        mock_run.assert_called_once()
-
-    @patch("wut.get_config_path")
-    @patch("wut.get_repo_key")
-    @patch("subprocess.run")
-    def test_run_cwd_flag(self, mock_run, mock_get_repo_key, mock_get_config_path):
-        mock_get_config_path.return_value = self.config_file
-        mock_get_repo_key.return_value = "owner/project"
-
-        test_data = {
-            "owner/project": {
-                "repo": "/path/to/repo",
-                "commands": [{"title": "test", "command": "echo test"}],
-            }
-        }
-        with open(self.config_file, "w") as f:
-            json.dump(test_data, f)
-
-        with patch("os.getcwd", return_value="/current/dir"):
-            cmd_run("test", [], use_cwd=True)
-
-        call_args = mock_run.call_args
-        self.assertEqual(call_args[1]["cwd"], "/current/dir")
-
-    @patch("wut.get_config_path")
-    @patch("wut.get_repo_key")
-    def test_run_no_match(self, mock_get_repo_key, mock_get_config_path):
-        mock_get_config_path.return_value = self.config_file
-        mock_get_repo_key.return_value = "owner/project"
-
-        test_data = {
-            "owner/project": {
-                "repo": "/path/to/repo",
-                "commands": [{"title": "test", "command": "echo test"}],
-            }
-        }
-        with open(self.config_file, "w") as f:
-            json.dump(test_data, f)
-
-        with patch("sys.stderr", new_callable=MagicMock):
-            with self.assertRaises(SystemExit) as cm:
-                cmd_run("nomatch", [])
-            self.assertEqual(cm.exception.code, 1)
+        with patch("builtins.print") as mock_print:
+            cmd_run()
+            mock_print.assert_called_with("No commands defined for this repository")
 
 
 if __name__ == "__main__":

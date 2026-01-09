@@ -4,9 +4,11 @@ import json
 import os
 import subprocess
 import sys
+import termios
+import tty
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -123,10 +125,111 @@ def cmd_dis() -> None:
         print("No commands defined for this repository")
         return
 
-    max_title_len = max(len(cmd.title) for cmd in repo_config.commands)
-    for cmd in repo_config.commands:
-        desc = cmd.description or ""
-        print(f"{cmd.title:<{max_title_len}}  {desc}")
+    for i, cmd in enumerate(repo_config.commands, 1):
+        print(f"{i}. {cmd.title} - {cmd.command}")
+
+
+def fuzzy_match(query: str, text: str) -> Tuple[bool, float]:
+    if not query:
+        return True, 0.0
+
+    query_lower = query.lower()
+    text_lower = text.lower()
+
+    idx = 0
+    positions = []
+
+    for i, char in enumerate(text_lower):
+        if idx < len(query_lower) and char == query_lower[idx]:
+            positions.append(i)
+            idx += 1
+
+    if idx != len(query_lower):
+        return False, 0.0
+
+    score = 0.0
+    for pos in positions:
+        score += 1.0 / (pos + 1)
+
+    return True, score
+
+
+def interactive_select(commands: List[Command]) -> Optional[Command]:
+    import select
+
+    if not commands:
+        return None
+
+    filtered = commands[:]
+    selected_idx = 0
+    query = ""
+
+    old_settings = termios.tcgetattr(sys.stdin.fileno())
+
+    try:
+        tty.setraw(sys.stdin.fileno())
+
+        while True:
+            sys.stdout.write("\033[H\033[J")
+
+            if filtered:
+                for i, cmd in enumerate(filtered):
+                    row = i + 1
+                    sys.stdout.write(
+                        f"\033[{row};1H\033[K{'  ' if i != selected_idx else '> '}{cmd.title} - {cmd.command}"
+                    )
+            else:
+                sys.stdout.write("\033[1;1H\033[KNo matches")
+
+            prompt_row = len(filtered) + 2 if filtered else 2
+            sys.stdout.write(f"\033[{prompt_row};1H> {query}")
+            sys.stdout.flush()
+
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                char = sys.stdin.read(1)
+
+                if char == "\x03":
+                    return None
+                elif char == "\r" or char == "\n":
+                    if filtered:
+                        return filtered[selected_idx]
+                elif char == "\x1b":
+                    next_char = sys.stdin.read(1)
+                    if next_char == "[":
+                        arrow = sys.stdin.read(1)
+                        if arrow == "A":
+                            selected_idx = max(0, selected_idx - 1)
+                        elif arrow == "B":
+                            selected_idx = min(len(filtered) - 1, selected_idx + 1)
+                    else:
+                        return None
+                elif char == "\x7f" or char == "\x08":
+                    query = query[:-1]
+                elif ord(char) >= 32:
+                    query += char
+
+                filtered = []
+                for cmd in commands:
+                    matches, score = fuzzy_match(query, cmd.title)
+                    if matches:
+                        filtered.append((cmd, score))
+                    else:
+                        matches_cmd, score_cmd = fuzzy_match(query, cmd.command)
+                        if matches_cmd:
+                            filtered.append((cmd, score_cmd))
+
+                filtered.sort(key=lambda x: -x[1])
+                filtered = [item[0] for item in filtered]
+
+                if filtered:
+                    selected_idx = min(selected_idx, len(filtered) - 1)
+                else:
+                    selected_idx = 0
+
+    finally:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
+        sys.stdout.write("\033[H\033[J")
+        sys.stdout.flush()
 
 
 def cmd_add() -> None:
@@ -172,44 +275,25 @@ def cmd_add() -> None:
     print(f'Added command "{title}"')
 
 
-def cmd_run(selector: str, args: List[str], use_cwd: bool = False) -> None:
+def cmd_run(use_cwd: bool = False) -> None:
     config = load_config()
     repo_key = get_repo_key()
 
     if repo_key not in config:
-        sys.stderr.write("wut: no commands defined for this repository\n")
-        sys.exit(1)
+        print("No commands defined for this repository")
+        return
 
     repo_config = config[repo_key]
-    matching = []
 
-    for cmd in repo_config.commands:
-        if cmd.title == selector:
-            matching.insert(0, cmd)
-            break
-        elif cmd.title.startswith(selector):
-            matching.append(cmd)
+    if not repo_config.commands:
+        print("No commands defined for this repository")
+        return
 
-    if not matching:
-        for cmd in repo_config.commands:
-            if selector in cmd.title:
-                matching.append(cmd)
+    selected_cmd = interactive_select(repo_config.commands)
 
-    if not matching:
-        sys.stderr.write(f'wut: no command matches "{selector}"\n')
-        sys.exit(1)
-
-    if len(matching) > 1:
-        sys.stderr.write(
-            f'wut: ambiguous selector "{selector}", matches: {", ".join(cmd.title for cmd in matching)}\n'
-        )
-        sys.exit(1)
-
-    target_cmd = matching[0]
-    full_command = f"{target_cmd.command} {' '.join(args)}"
-
-    cwd = os.getcwd() if use_cwd else repo_config.repo
-    subprocess.run(full_command, shell=True, cwd=cwd)
+    if selected_cmd:
+        cwd = os.getcwd() if use_cwd else repo_config.repo
+        subprocess.run(selected_cmd.command, shell=True, cwd=cwd)
 
 
 def print_help() -> None:
@@ -223,14 +307,15 @@ def print_help() -> None:
     print(f"  wut init          Initialize config")
     print(f"  wut dis           List commands for current repo")
     print(f"  wut add           Add a new command")
-    print(f"  wut run <cmd>     Run a command (partial title matching)")
-    print(f"  wut run <cmd> --cwd  Run command from current directory")
+    print(f"  wut run           Interactive command selection")
+    print(
+        f"  wut run --cwd     Interactive command selection (run from current directory)"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("command", nargs="?", default="help")
-    parser.add_argument("args", nargs="*")
     parser.add_argument("--cwd", action="store_true")
     parsed = parser.parse_args()
 
@@ -245,14 +330,10 @@ def main() -> None:
     elif cmd == "add":
         cmd_add()
     elif cmd == "run":
-        if not parsed.args:
-            sys.stderr.write("wut: run requires a command selector\n")
-            sys.exit(1)
-        selector = parsed.args[0]
-        extra_args = parsed.args[1:]
-        cmd_run(selector, extra_args, parsed.cwd)
+        cmd_run(parsed.cwd)
     else:
-        cmd_run(cmd, parsed.args, parsed.cwd)
+        sys.stderr.write(f'wut: unknown command "{cmd}"\n')
+        sys.exit(1)
 
 
 if __name__ == "__main__":
