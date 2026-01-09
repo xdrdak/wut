@@ -33,14 +33,13 @@ Single-file, dependency-free Python 3 CLI for managing per-git-repo “commands�
 }
   ```
 
-2) Repo identity
-	•	Repo identity key (REPO_KEY) is <owner>/<project>, e.g. bobby/droptables.
-	•	Derived from the git repository name and its immediate namespace (owner).
-	•	Do not attempt to normalize or support multiple remote URL formats.
-	•	If the tool cannot derive owner/project, error out.
+ 2) Repo identity
+	•	Repo identity key (REPO_KEY) is MD5 hash of repo's absolute path, truncated to 16 characters.
+	•	Derived from `git rev-parse --show-toplevel` to get repo root.
+	•	Works with or without git remotes configured.
 	•	User must be inside a git repository; otherwise error.
 
-The repo’s absolute path is still stored under repo for reference and locating the repo root.
+The repo's absolute path is still stored under repo for reference and locating the repo root.
 
 3) Command schema rules
 	•	title must be unique per repo; duplicates are an error.
@@ -75,9 +74,10 @@ wut dis
 	•	Show descriptions by default
 
 wut run
-	•	Accept partial command title as selector
-	•	Matching: simplest implementation (exact → prefix → substring)
-	•	No confirmation prompt
+	•	Interactive fuzzy search interface for selecting commands
+	•	Typing filters the list by fuzzy matching against command title and command string
+	•	List is sorted by match accuracy score
+	•	Keyboard navigation: up/down arrows to move selection, enter to execute, ctrl+c or esc to cancel
 	•	Default working dir: repo root
 	•	Optional flag to run from current working directory
 	•	Execute commands via shell

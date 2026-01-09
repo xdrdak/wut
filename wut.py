@@ -74,31 +74,9 @@ def get_repo_key() -> str:
         sys.stderr.write("wut: not in a git repository\n")
         sys.exit(1)
 
-    repo_path = Path(repo_root)
-    repo_name = repo_path.name
+    import hashlib
 
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=repo_root,
-        )
-        remote_url = result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        sys.stderr.write("wut: cannot determine repo owner/project\n")
-        sys.exit(1)
-
-    if remote_url.startswith("git@github.com:"):
-        parts = remote_url[len("git@github.com:") :].removesuffix(".git")
-    elif remote_url.startswith("https://github.com/"):
-        parts = remote_url[len("https://github.com/") :].removesuffix(".git")
-    else:
-        sys.stderr.write("wut: unsupported remote URL format\n")
-        sys.exit(1)
-
-    return parts
+    return hashlib.md5(repo_root.encode()).hexdigest()[:16]
 
 
 def cmd_init() -> None:
@@ -187,6 +165,9 @@ def interactive_select(commands: List[Command]) -> Optional[Command]:
             help_row = prompt_row + 2
             help_text = "\033[90m↑↓: Navigate  Enter: Select  Ctrl+C/Esc: Quit\033[0m"
             sys.stdout.write(f"\033[{help_row};1H\033[K{help_text}")
+
+            cursor_col = len("> ") + len(query) + 1
+            sys.stdout.write(f"\033[{prompt_row};{cursor_col}H")
             sys.stdout.flush()
 
             if select.select([sys.stdin], [], [], 0.1)[0]:
@@ -279,6 +260,50 @@ def cmd_add() -> None:
     print(f'Added command "{title}"')
 
 
+def find_editor() -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "core.editor"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        editor = result.stdout.strip()
+        if editor:
+            return editor
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    editor = os.environ.get("EDITOR")
+    if editor:
+        return editor
+
+    try:
+        subprocess.run(["which", "vi"], capture_output=True, check=True)
+        return "vi"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    return None
+
+
+def cmd_edit() -> None:
+    config_path = get_config_path()
+
+    if not config_path.exists():
+        sys.stderr.write(f"wut: config file not found at {config_path}\n")
+        sys.stderr.write('wut: run "wut init" to initialize\n')
+        sys.exit(1)
+
+    editor = find_editor()
+    if not editor:
+        sys.stderr.write("wut: no editor found\n")
+        sys.stderr.write("wut: tried: git config core.editor, EDITOR, vi\n")
+        sys.exit(1)
+
+    subprocess.run(editor.split() + [str(config_path)], cwd=config_path.parent)
+
+
 def cmd_run(use_cwd: bool = False) -> None:
     config = load_config()
     repo_key = get_repo_key()
@@ -315,6 +340,7 @@ def print_help() -> None:
     print(
         f"  wut run --cwd     Interactive command selection (run from current directory)"
     )
+    print(f"  wut edit          Open config in editor")
 
 
 def main() -> None:
@@ -335,6 +361,8 @@ def main() -> None:
         cmd_add()
     elif cmd == "run":
         cmd_run(parsed.cwd)
+    elif cmd == "edit":
+        cmd_edit()
     else:
         sys.stderr.write(f'wut: unknown command "{cmd}"\n')
         sys.exit(1)

@@ -18,6 +18,8 @@ from wut import (
     cmd_dis,
     cmd_add,
     cmd_run,
+    cmd_edit,
+    find_editor,
     fuzzy_match,
     Command,
     RepoConfig,
@@ -96,40 +98,16 @@ class TestConfigLoadSave(unittest.TestCase):
 
 class TestRepoKey(unittest.TestCase):
     @patch("subprocess.run")
-    def test_get_repo_key_github_ssh(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(stdout="/path/to/repo\n", stderr=""),
-            MagicMock(stdout="git@github.com:owner/project.git\n", stderr=""),
-        ]
+    def test_get_repo_key_from_path(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="/path/to/repo\n", stderr="")
 
         repo_key = get_repo_key()
-        self.assertEqual(repo_key, "owner/project")
-
-    @patch("subprocess.run")
-    def test_get_repo_key_github_https(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(stdout="/path/to/repo\n", stderr=""),
-            MagicMock(stdout="https://github.com/owner/project.git\n", stderr=""),
-        ]
-
-        repo_key = get_repo_key()
-        self.assertEqual(repo_key, "owner/project")
+        self.assertEqual(len(repo_key), 16)
+        self.assertEqual(repo_key, "7e8a376c8bb0893e")
 
     @patch("subprocess.run")
     def test_get_repo_key_not_git_repo(self, mock_run):
         mock_run.side_effect = subprocess.CalledProcessError(1, "git")
-
-        with patch("sys.stderr", new_callable=MagicMock):
-            with self.assertRaises(SystemExit) as cm:
-                get_repo_key()
-            self.assertEqual(cm.exception.code, 1)
-
-    @patch("subprocess.run")
-    def test_get_repo_key_no_origin(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(stdout="/path/to/repo\n", stderr=""),
-            subprocess.CalledProcessError(1, "git"),
-        ]
 
         with patch("sys.stderr", new_callable=MagicMock):
             with self.assertRaises(SystemExit) as cm:
@@ -358,6 +336,91 @@ class TestCmdRun(unittest.TestCase):
         with patch("builtins.print") as mock_print:
             cmd_run()
             mock_print.assert_called_with("No commands defined for this repository")
+
+
+class TestFindEditor(unittest.TestCase):
+    @patch("subprocess.run")
+    def test_git_config_editor(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="emacs\n", stderr="")
+        with patch.dict(os.environ, {}, clear=True):
+            editor = find_editor()
+            self.assertEqual(editor, "emacs")
+
+    @patch("subprocess.run")
+    def test_editor_env_var(self, mock_run):
+        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+        with patch.dict(os.environ, {"EDITOR": "nano"}):
+            editor = find_editor()
+            self.assertEqual(editor, "nano")
+
+    @patch("subprocess.run")
+    def test_vi_fallback(self, mock_run):
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(1, "git"),
+            MagicMock(stdout="", stderr=""),
+        ]
+        with patch.dict(os.environ, {}, clear=True):
+            editor = find_editor()
+            self.assertEqual(editor, "vi")
+
+    @patch("subprocess.run")
+    def test_no_editor_found(self, mock_run):
+        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+        with patch.dict(os.environ, {}, clear=True):
+            editor = find_editor()
+            self.assertIsNone(editor)
+
+
+class TestCmdEdit(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_file = Path(self.temp_dir) / "commands.json"
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir)
+
+    @patch("wut.get_config_path")
+    def test_edit_no_config_file(self, mock_get_config_path):
+        mock_get_config_path.return_value = self.config_file
+
+        with patch("sys.stderr", new_callable=MagicMock):
+            with self.assertRaises(SystemExit) as cm:
+                cmd_edit()
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch("wut.get_config_path")
+    @patch("wut.find_editor")
+    @patch("subprocess.run")
+    def test_edit_success(
+        self, mock_subprocess_run, mock_find_editor, mock_get_config_path
+    ):
+        mock_get_config_path.return_value = self.config_file
+        mock_find_editor.return_value = "vim"
+
+        with open(self.config_file, "w") as f:
+            json.dump({}, f)
+
+        cmd_edit()
+
+        self.assertEqual(mock_subprocess_run.call_count, 1)
+        call_args = mock_subprocess_run.call_args_list[0]
+        self.assertEqual(call_args[0][0], ["vim", str(self.config_file)])
+
+    @patch("wut.get_config_path")
+    @patch("wut.find_editor")
+    def test_edit_no_editor(self, mock_find_editor, mock_get_config_path):
+        mock_get_config_path.return_value = self.config_file
+        mock_find_editor.return_value = None
+
+        with open(self.config_file, "w") as f:
+            json.dump({}, f)
+
+        with patch("sys.stderr", new_callable=MagicMock):
+            with self.assertRaises(SystemExit) as cm:
+                cmd_edit()
+            self.assertEqual(cm.exception.code, 1)
 
 
 if __name__ == "__main__":

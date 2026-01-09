@@ -2,6 +2,8 @@
 
 This document serves as the authoritative specification for all wut commands. It defines the expected behavior, arguments, error conditions, and edge cases for each command.
 
+**IMPORTANT:** When adding, editing, or changing any command, this file (`spec/commands.md`) must be used as the point of reference. This ensures all commands are documented consistently in one place.
+
 ## help
 
 ### Signature
@@ -28,6 +30,7 @@ Commands:
   wut add           Add a new command
   wut run           Interactive command selection
   wut run --cwd     Interactive command selection (run from current directory)
+  wut edit          Open config in editor
 ```
 
 ### Error Conditions
@@ -69,7 +72,6 @@ wut dis
 ### Error Conditions
 - Must be run inside a git repository (exits with error if not)
 - Config file must exist and be valid JSON (exits with error if missing or corrupt)
-- Cannot determine repo owner/project from git remote (exits with error)
 
 ### Edge Cases
 - Repository has no commands defined in config: prints "No commands defined for this repository"
@@ -95,7 +97,6 @@ wut add
 ### Error Conditions
 - Must be run inside a git repository (exits with error if not)
 - Config file must exist and be valid JSON (exits with error if missing or corrupt)
-- Cannot determine repo owner/project from git remote (exits with error)
 - Title is empty: exits with error "wut: title is required"
 - Command is empty: exits with error "wut: command is required"
 - Title already exists for this repository: exits with error "wut: command "<title>" already exists"
@@ -133,7 +134,6 @@ wut run --cwd
 ### Error Conditions
 - Must be run inside a git repository (exits with error if not)
 - Config file must exist and be valid JSON (exits with error if missing or corrupt)
-- Cannot determine repo owner/project from git remote (exits with error)
 - No commands defined for repository: displays message "No commands defined for this repository" and exits
 
 ### Edge Cases
@@ -141,21 +141,49 @@ wut run --cwd
 - No matches for typed query: shows empty list
 - Command fails during execution: subprocess error propagates directly
 
+## edit
+
+### Signature
+```
+wut edit
+```
+
+### Behavior
+- Opens the commands.json file in a text editor for manual editing
+- Editor resolution order:
+  1. `core.editor` git config setting (via `git config --get core.editor`)
+  2. `EDITOR` environment variable
+  3. `vi` (if available)
+  4. Error if no editor found
+- Opens the commands.json file at `${XDG_CONFIG_HOME:-~/.config}/wut/commands.json`
+- Subprocess inherits stdio (editor output goes directly to terminal)
+- Waits for editor to exit before returning
+- Does not validate JSON after editing (user is responsible for ensuring valid JSON)
+- Default working directory: config directory containing commands.json
+
+### Error Conditions
+- Config file doesn't exist: exits with error "wut: config file not found at <path>" and guidance to run `wut init`
+- No editor can be found: exits with error "wut: no editor found" and message listing attempted editors
+- Editor command fails: exits with editor's exit code
+
+### Edge Cases
+- Editor command includes arguments (e.g., "vim -p"): arguments are passed through to editor
+- Editor resolution happens before checking if commands.json exists (user sees editor error first if misconfigured)
+- Invalid JSON after editing: subsequent wut commands will fail with config parse errors
+
 ## Shared Behavior
 
 ### Repo Key Derivation
-- Repo key format: `<owner>/<project>` (e.g., "bobby/droptables")
-- Derived from `git remote get-url origin`
-- Supported URL formats:
-  - `git@github.com:owner/project.git`
-  - `https://github.com/owner/project.git`
-- Any other URL format results in error
-- Repo key is used as identifier in commands.json, but repo's absolute path is also stored separately
+- Repo key format: MD5 hash of the repo's absolute path, truncated to 16 characters
+- Derived from `git rev-parse --show-toplevel` to get repo root
+- Hash ensures uniqueness even if multiple repos have the same directory name
+- Works with or without git remotes configured
+- Repo key is used as identifier in commands.json, but repo's absolute path is also stored separately for reference
 
 ### Config File Format
 ```json
 {
-  "owner/project": {
+  "7e8a376c8bb0893e": {
     "repo": "/absolute/path/to/repo",
     "commands": [
       {
