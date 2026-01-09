@@ -176,13 +176,17 @@ def interactive_select(commands: List[Command]) -> Optional[Command]:
                 for i, cmd in enumerate(filtered):
                     row = i + 1
                     sys.stdout.write(
-                        f"\033[{row};1H\033[K{'  ' if i != selected_idx else '> '}{cmd.title} - {cmd.command}"
+                        f"\033[{row};1H\033[K{'  ' if i != selected_idx else '➡ '}{cmd.title} - {cmd.command}"
                     )
             else:
                 sys.stdout.write("\033[1;1H\033[KNo matches")
 
             prompt_row = len(filtered) + 2 if filtered else 2
             sys.stdout.write(f"\033[{prompt_row};1H> {query}")
+
+            help_row = prompt_row + 2
+            help_text = "\033[90m↑↓: Navigate  Enter: Select  Ctrl+C/Esc: Quit\033[0m"
+            sys.stdout.write(f"\033[{help_row};1H\033[K{help_text}")
             sys.stdout.flush()
 
             if select.select([sys.stdin], [], [], 0.1)[0]:
