@@ -48,7 +48,7 @@ The repo's absolute path is still stored under repo for reference and locating t
 	•	Commands may accept forwarded arguments.
 
 4) Specs system
-	•	Specs live in spec/.
+	•	Specs live at the repo root (spec.md).
 	•	Specs are authoritative when present, but none are required before coding.
 	•	Add specs only when precision is needed.
 

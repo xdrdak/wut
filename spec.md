@@ -2,7 +2,7 @@
 
 This document serves as the authoritative specification for all wut commands. It defines the expected behavior, arguments, error conditions, and edge cases for each command.
 
-**IMPORTANT:** When adding, editing, or changing any command, this file (`spec/commands.md`) must be used as the point of reference. This ensures all commands are documented consistently in one place.
+**IMPORTANT:** When adding, editing, or changing any command, this file (`spec.md`) must be used as the point of reference. This ensures all commands are documented consistently in one place.
 
 ## help
 
